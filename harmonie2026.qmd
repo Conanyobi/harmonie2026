@@ -301,17 +301,30 @@ mission_file <- resolve_input_file("Mission_HARMONIE_2026.csv")
 ehm_file <- resolve_input_file("EHM_Harmonie.csv")
 
 # Lecture des données brutes de la mission
-raw <- read.csv(mission_file, stringsAsFactors = FALSE,
-                check.names = FALSE, na.strings = c("", "NA"),
-                fileEncoding = "UTF-8-BOM")
+raw <- read.csv2(mission_file, stringsAsFactors = FALSE,
+                 check.names = FALSE, na.strings = c("", "NA"),
+                 fileEncoding = "UTF-8-BOM")
 
 # Retirer les lignes entièrement vides (une ligne vide peut être présente à l'export)
 data <- raw[rowSums(!is.na(raw)) > 0, , drop = FALSE]
 
 # Fonctions de préparation des données
-parse_mdy <- function(x) {
+parse_date <- function(x) {
   x <- trimws(as.character(x))
-  as.Date(x, format = "%m-%d-%y")
+  x[x == ""] <- NA_character_
+
+  # Les exports HARMONIE utilisent principalement le format ISO AAAA-MM-JJ.
+  # Quelques formats usuels supplémentaires sont acceptés pour rendre le script robuste.
+  out <- as.Date(rep(NA_character_, length(x)))
+  formats <- c("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%m-%d-%y")
+
+  for (fmt in formats) {
+    idx <- is.na(out) & !is.na(x)
+    if (!any(idx)) break
+    parsed <- suppressWarnings(as.Date(x[idx], format = fmt))
+    out[idx] <- parsed
+  }
+  out
 }
 
 format_date_fr <- function(x) {
@@ -379,8 +392,21 @@ classify_ta <- function(x) {
 }
 
 # Dates : calcul sur objets Date, affichage en « jour mois année »
-data$DATE_RECENSEMENT_DATE <- parse_mdy(data$DATE_RECENSEMENT)
-data$DATE_NAISSANCE_DATE <- parse_mdy(data$DATE_NAISSANCE)
+# Vérification explicite des colonnes nécessaires avant leur transformation
+required_date_cols <- c("DATE_RECENSEMENT", "DATE_NAISSANCE")
+missing_date_cols <- setdiff(required_date_cols, names(data))
+if (length(missing_date_cols) > 0) {
+  stop(
+    paste0(
+      "Colonnes de date introuvables : ", paste(missing_date_cols, collapse = ", "),
+      ". Vérifiez le séparateur du fichier Mission_HARMONIE_2026.csv."
+    ),
+    call. = FALSE
+  )
+}
+
+data$DATE_RECENSEMENT_DATE <- parse_date(data$DATE_RECENSEMENT)
+data$DATE_NAISSANCE_DATE <- parse_date(data$DATE_NAISSANCE)
 data$DATE_RECENSEMENT <- format_date_fr(data$DATE_RECENSEMENT_DATE)
 data$DATE_NAISSANCE <- format_date_fr(data$DATE_NAISSANCE_DATE)
 
@@ -436,7 +462,7 @@ data$TA_CLASSE <- classify_ta(data$TA_NORMALISEE)
 
 Ce rapport présente uniquement des analyses descriptives. Les variables directement identifiantes (nom, prénoms, téléphone, contact proche, identifiants techniques, pièces jointes et coordonnées de l'enregistreur) ne sont pas affichées dans les tableaux.
 
-## 1. Vue d'ensemble
+## 1. Vue d'ensemble de la base
 
 ```{r overview}
 #| results: asis
@@ -446,7 +472,7 @@ n_vars <- ncol(raw)
 n_consent <- if ("CONSENTEMENT" %in% names(data)) sum(data$CONSENTEMENT == "Oui", na.rm = TRUE) else NA
 
 resume <- data.frame(
-  Indicateur = c("Patients recensés", "Nombre de variables", "Consentements 'Oui'"),
+  Indicateur = c("Patients recensés", "Variables dans le fichier source", "Consentements 'Oui'"),
   Valeur = c(n_patients, n_vars, n_consent)
 )
 print_ft(style_ft(flextable(resume), first_col_width = 4.2))
