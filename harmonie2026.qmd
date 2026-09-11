@@ -1,6 +1,7 @@
 ---
-title: "RAPPORT D'ANALYSE DESCRIPTIVE"
-subtitle: "Mission HARMONIE 2026"
+title: "RAPPORT ANALYTIQUE"
+subtitle: "Mission HARMONIE 2026 - Recensement des patients"
+author: "Dr K. M. YEBOUE"
 date: today
 date-format: "D MMMM YYYY"
 lang: fr
@@ -435,7 +436,7 @@ data$TA_CLASSE <- classify_ta(data$TA_NORMALISEE)
 
 Ce rapport présente uniquement des analyses descriptives. Les variables directement identifiantes (nom, prénoms, téléphone, contact proche, identifiants techniques, pièces jointes et coordonnées de l'enregistreur) ne sont pas affichées dans les tableaux.
 
-## 1. Vue d'ensemble de la base
+## 1. Vue d'ensemble
 
 ```{r overview}
 #| results: asis
@@ -445,7 +446,7 @@ n_vars <- ncol(raw)
 n_consent <- if ("CONSENTEMENT" %in% names(data)) sum(data$CONSENTEMENT == "Oui", na.rm = TRUE) else NA
 
 resume <- data.frame(
-  Indicateur = c("Patients recensés", "Variables dans le fichier source", "Consentements 'Oui'"),
+  Indicateur = c("Patients recensés", "Nombre de variables", "Consentements 'Oui'"),
   Valeur = c(n_patients, n_vars, n_consent)
 )
 print_ft(style_ft(flextable(resume), first_col_width = 4.2))
@@ -477,7 +478,7 @@ cat_table(data, "DOSSIER_MEDICAL")
 cat_table(data, "ETAT_GL_STABLE")
 cat_table(data, "MOTIF_DIAGNOSTIC")
 cat_table(data, "ATCD_ALLERGIES_TRAITEMENTS")
-cat_table(data, "TA_CLASSE", "Répartition selon la classification de la tension artérielle")
+cat_table(data, "TA_CLASSE", "Répartition selon les chiffres tensionnels")
 cat("*Note : la tension artérielle a été normalisée au format PAS/PAD (mmHg) avant classification ; les saisies non interprétables sont classées « Non renseigné ».*\n\n")
 ```
 
@@ -553,9 +554,10 @@ cat_table(data, "PEUT_FINANCER_BILAN_PREOP")
 cat_table(data, "JOUR_PROGRAMME", "Répartition selon le jour programmé")
 ```
 
-## 8. Complétude des variables d'analyse
+<!-- ## 8. Complétude des variables d'analyse -->
 
 ```{r completeness}
+#| eval: false
 #| results: asis
 
 excluded <- c(
@@ -579,9 +581,10 @@ comp <- comp[order(comp$Renseigné, comp$Variable), ]
 print_ft(style_ft(flextable(comp), first_col_width = 4.0))
 ```
 
-## 9. Remarques descriptives sur la qualité des données
+<!-- ## 9. Remarques descriptives sur la qualité des données -->
 
 ```{r data-quality}
+#| eval: false
 #| results: asis
 
 future_dates <- sum(data$DATE_RECENSEMENT_DATE > Sys.Date(), na.rm = TRUE)
@@ -602,5 +605,3 @@ qualite <- data.frame(
 )
 print_ft(style_ft(flextable(qualite), first_col_width = 5.0))
 ```
-
-*Fin de l'analyse descriptive. Aucune analyse inférentielle, aucun test statistique et aucun modèle multivarié ne sont inclus dans ce script.*
