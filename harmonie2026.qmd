@@ -118,49 +118,104 @@ graph_vars <- c(
   "Structure"
 )
 
+# Charte graphique HARMONIE 2026 -------------------------------------------------
+harmonie_cols <- c("#0B6E75", "#2A9D8F", "#5AB1BB", "#8ECAE6", "#F4A261", "#E76F51", "#6C757D")
+
+theme_harmonie <- function(base_size = 11) {
+  theme_minimal(base_family = "Arial", base_size = base_size) +
+    theme(
+      plot.title = element_text(face = "bold", size = 13, colour = "#1F2937", margin = margin(b = 8)),
+      plot.subtitle = element_text(size = 10, colour = "#6B7280", margin = margin(b = 10)),
+      axis.title = element_text(size = 10, colour = "#374151"),
+      axis.text = element_text(size = 9.5, colour = "#374151"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major.y = element_blank(),
+      legend.position = "bottom",
+      legend.title = element_blank(),
+      plot.margin = margin(10, 18, 10, 10)
+    )
+}
+
+theme_set(theme_harmonie())
+
 plot_cat <- function(tab, title, var = NULL) {
   d <- tab[tab$Modalité != "TOTAL", c("Modalité", "Effectif"), drop = FALSE]
+  d <- d[d$Effectif > 0, , drop = FALSE]
   if (nrow(d) < 2) return(invisible(NULL))
 
-  # « Non renseigné » reste toujours en dernière position.
-  mods <- d$Modalité[d$Modalité != "Non renseigné"]
-  if ("Non renseigné" %in% d$Modalité) mods <- c(mods, "Non renseigné")
+  d$Pourcentage <- if (sum(d$Effectif) > 0) 100 * d$Effectif / sum(d$Effectif) else 0
+  d$Etiquette <- paste0(d$Effectif, " (", format_number(d$Pourcentage, 1), " %)")
 
-  # Choix du graphique selon la nature de la variable et le nombre de modalités :
-  # - secteurs : variables nominales avec peu de modalités ;
-  # - barres verticales : variables ordinales avec peu de classes ;
-  # - barres horizontales : modalités nombreuses ou libellés longs.
-  pie_vars <- c("SEXE", "DOSSIER_MEDICAL", "ETAT_GL_STABLE", "CONSENTEMENT",
-                "PEUT_FINANCER_BILAN_PREOP")
+  # Variables ordinales : l'ordre des modalités porte une information et doit être conservé.
   ordered_vars <- c("CLASSE_AGE", "TA_CLASSE", "JOUR_PROGRAMME")
 
-  if (!is.null(var) && var %in% pie_vars && nrow(d) <= 4) {
-    d$Modalité <- factor(d$Modalité, levels = mods)
-    g <- ggplot(d, aes(x = "", y = Effectif, fill = Modalité)) +
-      geom_col(width = 1) +
+  # Choix automatique du visuel :
+  # - 2 à 3 modalités nominales : donut (composition d'un ensemble à 100 %)
+  # - variables ordinales courtes : barres verticales dans l'ordre métier
+  # - autres variables : barres horizontales, plus précises pour comparer les catégories
+  # « Non renseigné » est accepté dans le donut mais affiché en gris neutre.
+  use_donut <- (is.null(var) || !var %in% ordered_vars) && nrow(d) %in% 2:3
+
+  if (use_donut) {
+    # Conserver l'ordre du tableau (fréquence décroissante, manquants en dernier).
+    d$Modalité <- factor(d$Modalité, levels = d$Modalité)
+    d$Couleur <- "#B8BDC5"
+    idx_ok <- which(as.character(d$Modalité) != "Non renseigné")
+    d$Couleur[idx_ok] <- harmonie_cols[seq_along(idx_ok)]
+
+    g <- ggplot(d, aes(x = 2, y = Effectif, fill = Modalité)) +
+      geom_col(width = 0.72, colour = "white", linewidth = 0.8) +
       coord_polar(theta = "y") +
-      labs(title = title, x = NULL, y = NULL, fill = NULL) +
-      theme_void(base_family = "Arial", base_size = 10) +
-      theme(plot.title = element_text(face = "bold", size = 11),
-            legend.position = "right")
-  } else if (!is.null(var) && var %in% ordered_vars && nrow(d) <= 8) {
+      xlim(0.65, 2.55) +
+      scale_fill_manual(values = setNames(d$Couleur, as.character(d$Modalité))) +
+      labs(title = title, subtitle = "Part de chaque modalité dans l’ensemble", fill = NULL) +
+      theme_void(base_family = "Arial", base_size = 11) +
+      theme(
+        plot.title = element_text(face = "bold", size = 13, colour = "#1F2937", margin = margin(b = 6)),
+        plot.subtitle = element_text(size = 9.5, colour = "#6B7280", margin = margin(b = 8)),
+        legend.position = "bottom",
+        legend.text = element_text(size = 9.5, colour = "#374151"),
+        plot.margin = margin(10, 12, 10, 12)
+      ) +
+      guides(fill = guide_legend(nrow = ceiling(nrow(d) / 2), byrow = TRUE))
+
+    # Pourcentages dans les secteurs ; effectifs + % restent disponibles dans le tableau au-dessus.
+    g <- g + geom_text(
+      aes(label = paste0(format_number(Pourcentage, 1), " %")),
+      position = position_stack(vjust = 0.5),
+      colour = "white", fontface = "bold", size = 3.6
+    )
+
+  } else if (!is.null(var) && var %in% ordered_vars && nrow(d) <= 7 &&
+             max(nchar(as.character(d$Modalité)), na.rm = TRUE) <= 18) {
+    mods <- d$Modalité[d$Modalité != "Non renseigné"]
+    if ("Non renseigné" %in% d$Modalité) mods <- c(mods, "Non renseigné")
     d$Modalité <- factor(d$Modalité, levels = mods)
+    ymax <- max(d$Effectif, na.rm = TRUE) * 1.22
     g <- ggplot(d, aes(x = Modalité, y = Effectif)) +
-      geom_col(width = 0.7) +
+      geom_col(width = 0.66, fill = harmonie_cols[1]) +
+      geom_text(aes(label = Etiquette), vjust = -0.45, size = 3.2, colour = "#374151") +
+      scale_y_continuous(limits = c(0, ymax), expand = expansion(mult = c(0, .02))) +
       labs(title = title, x = NULL, y = "Effectif") +
-      theme_minimal(base_family = "Arial", base_size = 10) +
-      theme(plot.title = element_text(face = "bold", size = 11),
-            axis.text.x = element_text(angle = 35, hjust = 1),
-            panel.grid.major.x = element_blank(), panel.grid.minor = element_blank())
+      theme_harmonie() +
+      theme(axis.text.x = element_text(angle = 30, hjust = 1), panel.grid.major.x = element_blank())
   } else {
-    d$Modalité <- factor(d$Modalité, levels = rev(mods))
-    g <- ggplot(d, aes(x = Modalité, y = Effectif)) +
-      geom_col(width = 0.7) +
+    d2 <- d[d$Modalité != "Non renseigné", , drop = FALSE]
+    d2 <- d2[order(d2$Effectif, d2$Modalité), , drop = FALSE]
+    if ("Non renseigné" %in% d$Modalité) {
+      d2 <- rbind(d[d$Modalité == "Non renseigné", , drop = FALSE], d2)
+    }
+    d2$Modalité <- factor(d2$Modalité, levels = d2$Modalité)
+    d2$Couleur <- ifelse(as.character(d2$Modalité) == "Non renseigné", "Manquant", "Renseigné")
+    xmax <- max(d2$Effectif, na.rm = TRUE) * 1.30
+    g <- ggplot(d2, aes(x = Modalité, y = Effectif, fill = Couleur)) +
+      geom_col(width = 0.66, show.legend = FALSE) +
+      geom_text(aes(label = Etiquette), hjust = -0.08, size = 3.2, colour = "#374151") +
       coord_flip() +
+      scale_fill_manual(values = c("Renseigné" = harmonie_cols[1], "Manquant" = "#B8BDC5")) +
+      scale_y_continuous(limits = c(0, xmax), expand = expansion(mult = c(0, .01))) +
       labs(title = title, x = NULL, y = "Effectif") +
-      theme_minimal(base_family = "Arial", base_size = 10) +
-      theme(plot.title = element_text(face = "bold", size = 11),
-            panel.grid.major.y = element_blank(), panel.grid.minor = element_blank())
+      theme_harmonie()
   }
   print(g)
   cat("\n\n")
@@ -231,6 +286,16 @@ num_table <- function(data, var, title = NULL) {
     )
   }
   print_ft(style_ft(flextable(tab), first_col_width = 3.2))
+
+  if (var == "AGE" && length(x) >= 2) {
+    bw <- 5
+    g <- ggplot(data.frame(Valeur = x), aes(x = Valeur)) +
+      geom_histogram(binwidth = bw, boundary = 0, fill = harmonie_cols[1], colour = "white", linewidth = 0.35) +
+      labs(title = "Distribution de l’âge", subtitle = "Classes de 5 ans", x = "Âge (années)", y = "Effectif") +
+      theme_harmonie()
+    print(g)
+    cat("\n\n")
+  }
 }
 
 multiresponse_table <- function(data, vars, labels, title, denominator = nrow(data), show_graph = TRUE) {
@@ -250,13 +315,16 @@ multiresponse_table <- function(data, vars, labels, title, denominator = nrow(da
   if (show_graph && nrow(tab) >= 2) {
     dplot <- tab[, c("Modalité", "Effectif"), drop = FALSE]
     dplot$Modalité <- factor(dplot$Modalité, levels = rev(dplot$Modalité))
+    dplot$Pourcentage <- 100 * dplot$Effectif / denominator
+    dplot$Etiquette <- paste0(dplot$Effectif, " (", format_number(dplot$Pourcentage, 1), " %)")
+    xmax <- max(dplot$Effectif, na.rm = TRUE) * 1.30
     g <- ggplot(dplot, aes(x = Modalité, y = Effectif)) +
-      geom_col(width = 0.7) +
+      geom_col(width = 0.66, fill = harmonie_cols[1]) +
+      geom_text(aes(label = Etiquette), hjust = -0.08, size = 3.2, colour = "#374151") +
       coord_flip() +
+      scale_y_continuous(limits = c(0, xmax), expand = expansion(mult = c(0, .01))) +
       labs(title = title, x = NULL, y = "Effectif") +
-      theme_minimal(base_family = "Arial", base_size = 10) +
-      theme(plot.title = element_text(face = "bold", size = 11),
-            panel.grid.major.y = element_blank(), panel.grid.minor = element_blank())
+      theme_harmonie()
     print(g)
     cat("\n\n")
   }
@@ -584,7 +652,7 @@ cat_table(data, "Structure", "Répartition selon la structure")
 
 cat_table(data, "DOSSIER_MEDICAL")
 cat_table(data, "ETAT_GL_STABLE")
-cat_table(data, "MOTIF_DIAGNOSTIC")
+# cat_table(data, "MOTIF_DIAGNOSTIC")
 # cat_table(data, "ATCD_ALLERGIES_TRAITEMENTS")
 cat_table(data, "TA_CLASSE", "Répartition selon les chiffres tensionnels")
 cat("*Note : la tension artérielle a été normalisée au format PAS/PAD (mmHg) avant classification ; les saisies non interprétables sont classées « Non renseigné ».*\n\n")
