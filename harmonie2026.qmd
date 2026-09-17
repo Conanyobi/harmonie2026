@@ -300,13 +300,90 @@ resolve_input_file <- function(filename) {
 mission_file <- resolve_input_file("Mission_HARMONIE_2026.csv")
 ehm_file <- resolve_input_file("EHM_Harmonie.csv")
 
-# Lecture des données brutes de la mission
-raw <- read.csv2(mission_file, stringsAsFactors = FALSE,
-                 check.names = FALSE, na.strings = c("", "NA"),
-                 fileEncoding = "UTF-8-BOM")
+# Recherche facultative de l'export du projet Paramilitaires.
+# Le nom Kobo contient généralement un horodatage : on recherche donc par motif
+# plutôt que d'imposer un nom de fichier exact.
+find_optional_paramilitaires <- function() {
+  input_path <- tryCatch(knitr::current_input(dir = TRUE), error = function(e) "")
+  input_dir <- if (nzchar(input_path)) {
+    if (dir.exists(input_path)) input_path else dirname(input_path)
+  } else {
+    character(0)
+  }
+  base_dirs <- unique(c(getwd(), input_dir))
+  base_dirs <- base_dirs[nzchar(base_dirs)]
+  search_dirs <- unique(c(file.path(base_dirs, "data"), base_dirs))
 
-# Retirer les lignes entièrement vides (une ligne vide peut être présente à l'export)
-data <- raw[rowSums(!is.na(raw)) > 0, , drop = FALSE]
+  files <- unlist(lapply(search_dirs, function(d) {
+    if (!dir.exists(d)) return(character(0))
+    list.files(
+      d,
+      pattern = "^Mission_HARMONIE_2026_Paramilitaires.*\\.csv$",
+      full.names = TRUE,
+      ignore.case = TRUE
+    )
+  }), use.names = FALSE)
+
+  if (length(files) == 0) return(NA_character_)
+
+  # Si plusieurs exports sont présents, utiliser le plus récent.
+  info <- file.info(files)
+  normalizePath(files[which.max(info$mtime)], winslash = "/", mustWork = TRUE)
+}
+
+paramilitaires_file <- find_optional_paramilitaires()
+
+read_kobo_csv <- function(path) {
+  x <- read.csv2(
+    path,
+    stringsAsFactors = FALSE,
+    check.names = FALSE,
+    na.strings = c("", "NA"),
+    fileEncoding = "UTF-8-BOM"
+  )
+  # Retirer les lignes entièrement vides (une ligne vide peut être présente à l'export).
+  x[rowSums(!is.na(x)) > 0, , drop = FALSE]
+}
+
+# Lecture de la base principale.
+raw_principal <- read_kobo_csv(mission_file)
+
+# Ajouter les observations du projet Paramilitaires lorsqu'un export est disponible.
+if (!is.na(paramilitaires_file)) {
+  raw_paramilitaires <- read_kobo_csv(paramilitaires_file)
+
+  # Harmoniser la seule différence de nom de variable entre les deux projets.
+  if ("Structure_d_exercice" %in% names(raw_paramilitaires) &&
+      !"Structure" %in% names(raw_paramilitaires)) {
+    names(raw_paramilitaires)[names(raw_paramilitaires) == "Structure_d_exercice"] <- "Structure"
+  }
+
+  # Ajouter les éventuelles colonnes absentes de l'un ou l'autre export afin de
+  # rendre la fusion robuste à de petites évolutions des formulaires Kobo.
+  all_cols <- union(names(raw_principal), names(raw_paramilitaires))
+  for (nm in setdiff(all_cols, names(raw_principal))) raw_principal[[nm]] <- NA
+  for (nm in setdiff(all_cols, names(raw_paramilitaires))) raw_paramilitaires[[nm]] <- NA
+  raw_principal <- raw_principal[, all_cols, drop = FALSE]
+  raw_paramilitaires <- raw_paramilitaires[, all_cols, drop = FALSE]
+
+  # Conserver la provenance pour faciliter les contrôles, sans modifier les analyses.
+  raw_principal$.SOURCE_KOBO <- "Principal"
+  raw_paramilitaires$.SOURCE_KOBO <- "Paramilitaires"
+
+  raw <- rbind(raw_principal, raw_paramilitaires)
+
+  # Anti-doublon : pour un même _uuid non vide, conserver en priorité
+  # l'observation déjà présente dans Principal. Les lignes sans _uuid sont conservées.
+  uuid_clean <- trimws(as.character(raw$`_uuid`))
+  has_uuid <- !is.na(uuid_clean) & nzchar(uuid_clean)
+  duplicate_uuid <- has_uuid & duplicated(uuid_clean)
+  raw <- raw[!duplicate_uuid, , drop = FALSE]
+} else {
+  raw <- raw_principal
+  raw$.SOURCE_KOBO <- "Principal"
+}
+
+data <- raw
 
 # Fonctions de préparation des données
 parse_date <- function(x) {
@@ -430,7 +507,12 @@ ehm$Structure_code <- trimws(as.character(ehm$Structure_code))
 ehm$Structure_nom <- trimws(as.character(ehm$Structure_nom))
 structure_map <- setNames(ehm$Structure_nom, ehm$Structure_code)
 code_structure <- trimws(as.character(data$Structure))
-data$Structure <- unname(structure_map[code_structure])
+structure_libelle <- unname(structure_map[code_structure])
+# Principal contient des codes EHM, tandis que Paramilitaires peut déjà contenir
+# le libellé complet de la structure. Si aucune correspondance EHM n'est trouvée,
+# conserver donc la valeur originale plutôt que de la remplacer par NA.
+data$Structure <- ifelse(!is.na(structure_libelle) & nzchar(trimws(structure_libelle)),
+                         structure_libelle, code_structure)
 data$Structure[is.na(data$Structure) | trimws(data$Structure) == ""] <- NA_character_
 
 # Libellés plus lisibles pour quelques variables codées
