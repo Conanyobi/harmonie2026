@@ -511,7 +511,7 @@ for (i in seq_len(nrow(comparaison))) {
   rapport_n <- x$`Rapport réalisés / attendus (%)`
   sens <- if (ecart_n > 0) "supérieur" else if (ecart_n < 0) "inférieur" else "égal"
   cat(sprintf(
-    "Pour les **%s**, le planning prévoyait **%s patients**, tandis que le bilan chinois fait état de **%s actes**. Le volume déclaré est %s au volume attendu (écart : **%s actes** ; rapport des volumes : **%s**).\n\n",
+    "Pour le volet **%s**, le planning prévoyait **%s patients**, tandis que le bilan chinois fait état de **%s actes**. Le volume déclaré est %s au volume attendu (écart : **%s actes** ; rapport des volumes : **%s**).\n\n",
     tolower(x$Activite), fmt(attendus_n), fmt(realises_n), sens,
     fmt(abs(ecart_n)), fmt_pct(rapport_n)
   ))
