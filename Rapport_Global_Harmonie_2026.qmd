@@ -1,0 +1,516 @@
+---
+title: "MISSION HARMONIE 2026 — RAPPORT BILAN GLOBAL"
+subtitle: "Synthèse générale, recensement, sélection, triage, équipe médicale chinoise et comparaison"
+author: "Dr K. M. YEBOUE"
+date: today
+date-format: "D MMMM YYYY"
+lang: fr
+format:
+  docx:
+    toc: false
+    toc-depth: 2
+    number-sections: true
+    highlight-style: github
+    fig-width: 8
+    fig-height: 6
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    theme: cosmo
+    fig-width: 8
+    fig-height: 6
+execute:
+  echo: false
+  warning: false
+  message: false
+params:
+  dossier: "report-data"
+---
+
+```{r setup}
+#| include: false
+pkgs <- c("readxl","dplyr","tidyr","stringr","stringi","ggplot2","knitr","lubridate","purrr","tibble")
+missing <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly=TRUE)]
+if(length(missing)) stop("Installer les packages : ",paste(missing,collapse=", "))
+invisible(lapply(pkgs,library,character.only=TRUE))
+options(scipen=999, OutDec=",", digits=10)
+harmonie_cols <- c("#0B6E75", "#2A9D8F", "#5AB1BB", "#8ECAE6", "#F4A261", "#E76F51", "#6C757D")
+theme_harmonie <- function(base_size=11) theme_minimal(base_family="Arial",base_size=base_size) +
+ theme(plot.title=element_text(face="bold",size=13,colour="#1F2937",margin=margin(b=8)),
+       plot.subtitle=element_text(size=10,colour="#6B7280"),
+       axis.title=element_text(colour="#374151"),axis.text=element_text(colour="#374151"),
+       panel.grid.minor=element_blank(),panel.grid.major.y=element_blank(),
+       legend.position="bottom",legend.title=element_blank())
+theme_set(theme_harmonie())
+fmt <- function(x) format(x,big.mark=" ",decimal.mark=",",trim=TRUE)
+fmt_pct <- function(x) ifelse(is.na(x),"—",paste0(formatC(x,format="f",digits=1,decimal.mark=",")," %"))
+# Affichage homogène des tableaux, sans modifier les données numériques.
+tableau <- function(d, caption=NULL) {
+  # Ajouter une ligne Total uniquement aux tableaux de répartition homogènes.
+  # Les tableaux de bord, audits et indicateurs de nature différente ne sont pas additionnés.
+  colonnes_effectif <- intersect(c("Effectif", "Patients", "Lignes programmées"), names(d))
+  colonnes_pct <- names(d)[grepl("%|pourcentage", names(d), ignore.case=TRUE)]
+  est_repartition <- length(colonnes_effectif) == 1L && nrow(d) > 0L &&
+    any(vapply(d, function(x) is.character(x) || is.factor(x) || inherits(x, "Date"), logical(1)))
+  if (est_repartition) {
+    if (inherits(d[[1]], "Date")) d[[1]] <- format(d[[1]], "%d/%m/%Y")
+    ligne <- d[1, , drop=FALSE]
+    for (j in names(ligne)) {
+      if (j == names(d)[1]) {
+        ligne[[j]] <- if (inherits(d[[j]], "Date")) as.Date(NA) else "Total"
+      } else if (j %in% colonnes_effectif) {
+        ligne[[j]] <- sum(d[[j]], na.rm=TRUE)
+      } else if (j %in% colonnes_pct && is.numeric(d[[j]])) {
+        # Pour une répartition exhaustive, les parts totalisent 100,0 %.
+        ligne[[j]] <- round(sum(d[[j]], na.rm=TRUE), 1)
+      } else if (is.numeric(d[[j]])) {
+        ligne[[j]] <- NA_real_
+      } else {
+        ligne[[j]] <- ""
+      }
+    }
+    # Dans les tableaux croisés, le premier champ reste le libellé du total.
+    d <- dplyr::bind_rows(d, ligne)
+  }
+  for (j in names(d)) {
+    if (is.numeric(d[[j]]) && grepl("%|pourcentage|rapport", j, ignore.case=TRUE)) d[[j]] <- fmt_pct(d[[j]])
+    else if (is.numeric(d[[j]])) d[[j]] <- fmt(d[[j]])
+  }
+  knitr::kable(d, caption=caption)
+}
+
+pct <- function(a,b) {
+  # Dénominateur explicite ; NA lorsque le dénominateur est nul ou inconnu.
+  ifelse(!is.na(b) & b > 0, round(100 * a / b, 1), NA_real_)
+}
+# Arrondi équilibré à 0,1 point : les modalités totalisent exactement 100,0 %.
+pct_repartition <- function(effectifs) {
+  effectifs <- as.numeric(effectifs)
+  if (anyNA(effectifs) || any(effectifs < 0)) stop("Effectifs invalides")
+  total <- sum(effectifs)
+  if (!length(effectifs) || total == 0) return(rep(NA_real_, length(effectifs)))
+  exact <- 1000 * effectifs / total
+  unites <- floor(exact)
+  reste <- as.integer(1000 - sum(unites))
+  if (reste > 0) {
+    rang <- order(-(exact - unites), seq_along(effectifs))
+    unites[rang[seq_len(reste)]] <- unites[rang[seq_len(reste)]] + 1
+  }
+  unites / 10
+}
+file <- function(x) file.path(params$dossier,x)
+read <- function(f,s=1) { if(!file.exists(file(f))) stop("Fichier absent : ",f); readxl::read_excel(file(f),sheet=s,.name_repair="unique") }
+clean <- function(x) {x <- as.character(x); x[is.na(x)] <- ""; x <- stringi::stri_trans_general(x,"Latin-ASCII"); stringr::str_squish(toupper(x))}
+key <- function(x) gsub("[^A-Z0-9]","",clean(x))
+colpick <- function(d,poss) {n <- key(names(d)); p <- key(poss); i <- match(p,n); i <- i[!is.na(i)]; if(length(i)) as.character(d[[i[1]]]) else rep(NA_character_,nrow(d))}
+standard <- function(d,source,kind="additif") {
+  nm <- colpick(d,c("NOM","NOM & PRENOMS","NOM ET PRENOM","NOM ET PRÉNOM","NOM ET PRENOM","NOM ET PRÉNOMS","NOM ET PRENOMS"))
+  pren <- colpick(d,c("PRENOMS","PRÉNOMS"))
+  ident <- colpick(d,c("ID")); tel <- colpick(d,c("TELEPHONE","TÉLÉPHONE"))
+  spec <- colpick(d,c("SPECIALITE","SPÉCIALITÉ"))
+  acte <- colpick(d,c("ACTE"))
+  motif <- colpick(d,c("MOTIF","MOTIF DE CONSULTATION"))
+  rdv <- colpick(d,c("DATE RDV","JOUR PROGRAMME","JOUR PROGRAMMÉ","PROPOSITION DATE RDV","DATE"))
+  sexe <- colpick(d,c("SEXE","GENRE"))
+  age <- colpick(d,c("AGE","ÂGE","AGE (ANNEES)","AGE ANNEES"))
+  naissance <- colpick(d,c("DATE DE NAISSANCE","DDN","DATE NAISSANCE"))
+  categorie <- colpick(d,c("CATEGORIE","CATÉGORIE","STATUT"))
+  residence <- colpick(d,c("RESIDENCE","RÉSIDENCE","COMMUNE","LOCALITE","LOCALITÉ"))
+  prestation <- colpick(d,c("PRESTATION DEMANDÉE","PRESTATION DEMANDEE","PRESTATION"))
+  date_recensement <- colpick(d,c("DATE DE RECENSEMENT","DATE RECENSEMENT"))
+  decision <- colpick(d,c("DECISION FINALE","DÉCISION FINALE","DECISION","DÉCISION"))
+  # Clef de secours pour les listes VIP dépourvues d'ID et les noms composites.
+  fullname <- ifelse(is.na(pren)|clean(pren)=="",nm,paste(nm,pren))
+  tibble(source=source,origine=kind,id=key(ident),nom=clean(fullname),telephone=key(tel),specialite=clean(spec),motif=clean(motif),acte=clean(acte),date_rdv=as.character(rdv),decision=clean(decision),prestation=clean(prestation),date_recensement=date_recensement,sexe=clean(sexe),age_brut=age,naissance_brut=naissance,categorie=clean(categorie),residence=clean(residence)) |>
+    mutate(cle=case_when(id!=""~paste0("ID:",id),nom!=""~paste0("NOM:",key(nom)),TRUE~paste0("INCONNU:",source,":",row_number()))) |>
+    filter(id!="" | nom!="")
+}
+# Regroupements fondés exclusivement sur la spécialité RETENUE (ou SPECIALITE des listes programmées).
+normaliser_specialite <- function(x) {
+ z <- clean(x)
+ dplyr::case_when(
+  z=="" ~ "Non renseignée",
+  str_detect(z,"NEUROLOG") ~ "Neurologie",
+  str_detect(z,"MEDECINE PHYSIQUE|READAPTATION|REHABILITATION") ~ "Médecine physique et réadaptation",
+  str_detect(z,"RHUMATOLOG") ~ "Rhumatologie",
+  str_detect(z,"UROLOG") ~ "Urologie",
+  str_detect(z,"NEPHROLOG") ~ "Néphrologie",
+  str_detect(z,"HEMATOLOG") ~ "Hématologie",
+  str_detect(z,"MEDECINE GENERALE") ~ "Médecine générale",
+  str_detect(z,"GYNE|OBSTET") ~ "Gynéco-Obstétrique",
+  str_detect(z,"OPHTAL|O[P]?TALMO") ~ "Ophtalmologie",
+  str_detect(z,"ODONTO|DENT|STOMATO") ~ "Odontologie",
+  str_detect(z,"OTORHINO|\\bORL\\b|OTO-RHINO") ~ "ORL",
+  str_detect(z,"CARDIO") ~ "Cardiologie",
+  str_detect(z,"PNEUMO") ~ "Pneumologie",
+  str_detect(z,"GASTRO|HEPATO") ~ "Gastroentérologie",
+  str_detect(z,"ENDOCRINO|DIABETO") ~ "Endocrinologie",
+  str_detect(z,"TRADITIONNEL|MEDECINE CHINOISE|\\bMTC\\b|ACUPUNCT") ~ "Médecine traditionnelle chinoise",
+  str_detect(z,"BRUL|BRULURE") ~ "Chirurgie des brûlés",
+  str_detect(z,"ORTHOP|TRAUMATO") ~ "Orthopédie",
+  str_detect(z,"CHIRURG") ~ "Chirurgie générale",
+  str_detect(z,"PEDIATR") ~ "Pédiatrie",
+  str_detect(z,"DERMATO") ~ "Dermatologie",
+  str_detect(z,"PHYSIOTHER|KINESITHER|REEDUC") ~ "Physiothérapie",
+  TRUE ~ paste0("À vérifier : ",z))
+}
+# Deux actes exclusifs : seule la mention explicite de chirurgie classe en chirurgie.
+classer_acte <- function(x) ifelse(str_detect(clean(x),"CHIRURG|INTERVENTION|OPERAT|EXERESE"),"Chirurgie","Consultation")
+est_manquant <- function(x) {
+  z <- clean(x)
+  is.na(x) | z == "" | str_detect(z, "^(NON RENSEIGNE(E|ES|S)?|NON PRECISE(E|S)?|NA|N/A|INCONNU(E|S)?)$")
+}
+ordonner_modalites <- function(d, colonne="modalite", ordre_age=FALSE) {
+  x <- as.character(d[[colonne]])
+  manque <- est_manquant(x)
+  if (ordre_age) {
+    ordre <- c("60 ans et plus","45–59 ans","25–44 ans","15–24 ans","0–14 ans")
+    d <- d[order(manque,match(x,ordre),na.last=TRUE),,drop=FALSE]
+  } else {
+    effectif <- if ("Effectif" %in% names(d)) d$Effectif else if ("Patients" %in% names(d)) d$Patients else rep(0,nrow(d))
+    d <- d[order(manque,-effectif,x),,drop=FALSE]
+  }
+  d
+}
+summary_table <- function(d,variable,titre) {
+  t <- d |> mutate(modalite=ifelse(est_manquant(.data[[variable]]),"Non renseigné",as.character(.data[[variable]]))) |>
+    count(modalite,name="Effectif")
+  t <- ordonner_modalites(t)
+  t <- t |> mutate(`Pourcentage (%)`=pct_repartition(Effectif))
+  print(tableau(t,caption=titre))
+  valide <- t |> filter(!est_manquant(modalite), modalite != "Non renseigné") |> arrange(desc(Effectif))
+  if (nrow(valide)) cat("\n\nLa catégorie prédominante est **", valide$modalite[1], "** (", fmt(valide$Effectif[1]),
+    " ; ",fmt_pct(valide$`Pourcentage (%)`[1]), " de l’effectif analysé).\n\n",sep="")
+}
+bar <- function(d,var,titre,n=15) {
+  d |> filter(!is.na(.data[[var]]),.data[[var]]!="") |> count(.data[[var]],name="n",sort=TRUE) |>
+    slice_head(n=n) |>
+    ggplot(aes(x=reorder(.data[[var]],n),y=n)) + geom_col(fill=harmonie_cols[1]) +
+    coord_flip() + labs(title=titre,x=NULL,y="Effectif")
+}
+
+# Indicateurs sociodémographiques, calculés sur les personnes (et non sur les actes).
+preparer_demo <- function(d) {
+  d |> mutate(
+    sexe = case_when(sexe %in% c("M","MASCULIN","HOMME") ~ "Masculin",
+                     sexe %in% c("F","FEMININ","FEMME") ~ "Féminin",
+                     TRUE ~ "Non renseigné"),
+    categorie = case_when(
+      est_manquant(categorie) ~ "Non renseigné",
+      str_detect(categorie, "AYANT[ _-]*DROIT") ~ "Ayant-droit",
+      str_detect(categorie, "AFFAIRES[ _-]*MARITIMES") ~ "Affaires maritimes",
+      str_detect(categorie, "EAUX[ _-]*ET[ _-]*FOR[EÊ]TS") ~ "Eaux et forêts",
+      str_detect(categorie,"PARAMILIT|PARA MILIT") ~ "Paramilitaire",
+      str_detect(categorie,"MILITAIR") ~ "Militaire",
+      str_detect(categorie,"CIVIL") ~ "Civil",
+      TRUE ~ stringr::str_to_sentence(stringr::str_to_lower(categorie,locale="fr"),locale="fr")),
+    residence = ifelse(est_manquant(residence),"Non renseigné",residence),
+    age_num = suppressWarnings(as.numeric(str_replace(age_brut,",","."))),
+    date_naissance = suppressWarnings(as.Date(naissance_brut)),
+    date_naissance = coalesce(date_naissance, suppressWarnings(as.Date(naissance_brut,format="%d/%m/%Y"))),
+    age_num = ifelse(is.na(age_num) & !is.na(date_naissance),
+                     floor(as.numeric(as.Date("2026-10-14")-date_naissance)/365.2425),age_num),
+    age_num = ifelse(!is.na(age_num) & age_num>=0 & age_num<=110,age_num,NA_real_),
+    classe_age = cut(age_num,breaks=c(-Inf,14,24,44,59,Inf),
+                     labels=c("0–14 ans","15–24 ans","25–44 ans","45–59 ans","60 ans et plus")),
+    classe_age = as.character(classe_age),
+    classe_age = ifelse(is.na(classe_age),"Non renseigné",classe_age))
+}
+section_demo <- function(d, titre, sous_sections=FALSE) {
+  if (!sous_sections) cat("\n\n### Profil sociodémographique — ",titre,"\n\n",sep="")
+  for (v in c("sexe","age","classe_age","categorie")) {
+    if (v == "age") {
+      if (sous_sections) cat("\n\n### Âge\n\n")
+      else cat("\n\n**Âge**\n\n")
+      ages <- d$age_num[!is.na(d$age_num)]
+      if (length(ages)) {
+        stats_age <- tibble(Indicateur=c("Âges renseignés", "Âges non renseignés", "Âge moyen (ans)", "Âge médian (ans)", "Âge minimum (ans)", "Âge maximum (ans)"),
+          Valeur=c(fmt(length(ages)),fmt(sum(is.na(d$age_num))),fmt(round(mean(ages),1)),fmt(round(median(ages),1)),fmt(min(ages)),fmt(max(ages))))
+        print(tableau(stats_age))
+        cat("\n\nDans la population étudiée, l’âge moyen était de **",fmt(round(mean(ages),1))," ans** et la médiane de **",fmt(round(median(ages),1))," ans**, sur la base de ",fmt(length(ages))," âges renseignés.\n\n",sep="")
+      } else cat("\n\nÂge non exploitable dans les données disponibles.\n\n")
+      next
+    }
+    t <- d |> count(.data[[v]],name="Effectif") |> rename(Modalite=all_of(v))
+    t <- ordonner_modalites(t,"Modalite",ordre_age=(v=="classe_age"))
+    t <- t |> mutate(`Pourcentage (%)`=pct_repartition(Effectif))
+    libelle <- switch(v,sexe="Sexe",classe_age="Classes d’âge",categorie="Catégorie")
+    if (sous_sections) cat("\n\n### ",libelle,"\n\n",sep="")
+    else cat("\n\n**",libelle,"**\n\n",sep="")
+    print(tableau(t))
+    valide <- t |> filter(!est_manquant(Modalite), Modalite != "Non renseigné") |> arrange(desc(Effectif))
+    if (nrow(valide)) cat("\n\nLa modalité **",valide$Modalite[1],"** présentait l’effectif le plus élevé (",
+      fmt(valide$Effectif[1])," personnes ; ",fmt_pct(valide$`Pourcentage (%)`[1]),
+      " de l’effectif total).\n\n",sep="")
+    if (v == "sexe") {
+      n_m <- sum(t$Effectif[t$Modalite == "Masculin"], na.rm=TRUE)
+      n_f <- sum(t$Effectif[t$Modalite == "Féminin"], na.rm=TRUE)
+      if (n_f > 0) {
+        ratio <- n_m / n_f
+        cat("Le sex-ratio hommes/femmes était de **", fmt(round(ratio, 2)),
+            "** (", fmt(n_m), " hommes et ", fmt(n_f),
+            " femmes ; sexes non renseignés exclus du calcul).\n\n", sep="")
+      } else if (n_m > 0) {
+        cat("Le sex-ratio hommes/femmes était de **non calculable**, aucune femme renseignée.\n\n")
+      } else {
+        cat("**Sex-ratio : non calculable**, aucun effectif masculin ou féminin renseigné.\n\n")
+      }
+    }
+    nr <- t |> filter(Modalite == "Non renseigné")
+    if (nrow(nr) && nr$Effectif[1]>0) cat("La proportion de données non renseignées était de ",fmt(nr$Effectif[1]),
+      " (",fmt_pct(nr$`Pourcentage (%)`[1]),").\n\n",sep="")
+    if (v=="sexe" && sum(t$Effectif)>0) {
+      p <- ggplot(t,aes(x=2,y=Effectif,fill=Modalite)) +
+        geom_col(width=0.8,color="white",linewidth=0.8) +
+        coord_polar(theta="y") + xlim(0.5,2.5) +
+        scale_fill_manual(values=setNames(rep(harmonie_cols,length.out=nrow(t)),t$Modalite)) +
+        theme_void() + theme(legend.position="bottom") +
+        labs(title=paste(titre,"— Répartition selon le sexe"),fill=NULL)
+      print(p)
+    }
+    if (v=="classe_age" && nrow(t)>0) {
+      p <- ggplot(t,aes(x=factor(Modalite,levels=rev(t$Modalite)),y=Effectif)) +
+        geom_col(fill=harmonie_cols[1]) + coord_flip() +
+        labs(x=NULL,y="Effectif",title=paste(titre,"— Classes d’âge"))
+      print(p)
+    }
+  }
+}
+
+```
+
+```{r load-data}
+rec_brut <- read("Patients_recenses_4140.xlsx","Liste patients")
+rec <- standard(rec_brut,"Recensement","recense")
+# Le fichier de recensement porte PRESTATION DEMANDÉE, pas ACTE.
+# Toute prestation ne mentionnant pas explicitement chirurgie est une consultation.
+rec <- rec |> mutate(type_acte=classer_acte(prestation))
+plan_brut <- read("Patients_retenus_planning.xlsx","Planning général")
+plan <- standard(plan_brut,"Planning général","planning") |> mutate(type_acte=classer_acte(acte),specialite=normaliser_specialite(specialite))
+if (!all(c("SPECIALITE","ACTE") %in% names(plan_brut))) stop("Le planning général doit contenir les colonnes SPECIALITE et ACTE.")
+# Les onglets quotidiens ne sont pas cumulés : ils répètent le planning général.
+add_sources <- list(
+ c("HARMONIE_2026_Liste_Additive.xlsx","Liste additive"),
+ c("HARMONIE_2026_Liste_Additive_17-10-2026_Vague_06h.xlsx","Liste additive"),
+ c("Harmonie_2026_Liste_additive_OUATTARA_Seydou.xlsx","Feuil1"),
+ c("HARMONIE_2026_Liste_VIP.xlsx","LISTE VIP"),
+ c("HARMONIE_2026_Liste_VIP_AD.xlsx","LISTE VIP"),
+ c("HARMONIE_2026_Liste_VIP M.xlsx","LISTE VIP"),
+ c("2026-10-15_HARMONIE_2026_Liste_VIP.xlsx","LISTE VIP"),
+ c("HARMONIE_Additifs_Ambassade_Chine_Vague_12h.xlsx","Sheet1")
+)
+add <- purrr::map_dfr(add_sources,~standard(read(.x[1],.x[2]),.x[1],"additif")) |> mutate(type_acte=classer_acte(acte),specialite=normaliser_specialite(specialite))
+# Rapprochement par ID, puis par nom complet lorsqu'il est unique et non ambigu.
+all <- bind_rows(plan,add)
+all <- all |> mutate(nom_key=key(nom))
+# Un même nom peut être répété dans les listes VIP ; correspondance nominative prudente.
+map_nom <- all |> filter(id!="",nom_key!="") |> distinct(nom_key,id) |>
+  count(nom_key,name="n_id") |> filter(n_id==1) |>
+  inner_join(all |> filter(id!="",nom_key!="") |> distinct(nom_key,id),by="nom_key")
+all <- all |> left_join(map_nom |> rename(id_nom=id),by="nom_key") |>
+  mutate(id_final=ifelse(id!="",id,coalesce(id_nom,"")),cle_final=ifelse(id_final!="",paste0("ID:",id_final),paste0("NOM:",nom_key)))
+# La présence dans le planning prime : ses champs SPECIALITE et ACTE font autorité ; les additifs complètent uniquement les personnes absentes du planning.
+attendus <- all |> arrange(desc(origine=="planning"),desc(!str_detect(specialite,"Non renseignée|À vérifier"))) |>
+  distinct(cle_final,.keep_all=TRUE)
+attendus <- attendus |> mutate(provenance=ifelse(cle_final %in% (all |> filter(origine=="planning") |> pull(cle_final)),"Planning initial","Additif uniquement"))
+rec <- preparer_demo(rec)
+attendus <- preparer_demo(attendus)
+# Contrôles des personnes ayant plusieurs actes : dénombrement séparé des lignes et individus.
+plan_actes <- plan |> distinct(cle,acte,specialite,date_rdv,.keep_all=TRUE)
+bilan_raw <- read("Bilan_Chinois_Exploitable_Corrige.xlsx","Bilan journalier")
+bilan_raw <- bilan_raw |> filter(!is.na(Date),!grepl("TOTAL",as.character(Date),ignore.case=TRUE))
+bilan <- bilan_raw |> mutate(Date=as.Date(as.character(Date))) |>
+  mutate(across(-Date,~suppressWarnings(as.numeric(.x)))) |> arrange(Date)
+num <- names(bilan)[vapply(bilan,is.numeric,logical(1))]
+tot <- colSums(bilan[num],na.rm=TRUE)
+get_total <- function(n) if(n %in% names(tot)) unname(tot[[n]]) else NA_real_
+```
+
+# Synthèse générale
+
+```{r synthese}
+tibble(Indicateur=c("Total Patients recensés","Total Patients additifs","Total Patients programmés","Consultations réalisées — bilan chinois","Bilans de santé réalisés — bilan chinois","Interventions chirurgicales — bilan chinois","Actes réalisés hors du navire - bilan chinois"),
+ Valeur=c(nrow(rec),sum(attendus$provenance=="Additif uniquement"),nrow(attendus),get_total("Consultations total"),get_total("Bilans santé total"),get_total("Chirurgie total"),get_total("Équipe médicale (actes)"))) |>
+ tableau(caption="Tableau de bord général")
+```
+
+# Bilan recensement
+
+Au total, **`r fmt(nrow(rec))` fiches** ont été enregistrées lors du recensement. Les distributions présentées sont calculées à partir des effectifs disponibles, avec indication des valeurs manquantes.
+
+## Prestations recensées
+
+```{r recensement-actes, results="asis"}
+summary_table(rec,"type_acte","Répartition des patients recensés selon le type d’acte")
+```
+
+## Caractéristiques sociodémographiques
+
+```{r profil-recenses-detail, results="asis"}
+section_demo(rec,"Patients recensés",sous_sections=TRUE)
+```
+
+# Bilan sélection
+
+Après consolidation et dédoublonnage des sources, **`r fmt(nrow(attendus))` personnes** étaient attendues, dont **`r fmt(sum(attendus$provenance=="Additif uniquement"))`** figuraient exclusivement dans les listes additives. Ces effectifs correspondent à des personnes distinctes selon les règles de rapprochement appliquées.
+
+```{r profil-attendus, results="asis"}
+section_demo(attendus,"Patients retenus et attendus",sous_sections=TRUE)
+```
+
+
+
+## Répartition des patients attendus selon le type d’acte retenu
+
+```{r attendus-actes, results="asis"}
+summary_table(attendus,"type_acte","Répartition des patients attendus selon le type d’acte retenu")
+```
+
+## Répartition des patients attendus selon la spécialité retenue
+
+```{r attendus-specialites, results="asis"}
+summary_table(attendus,"specialite","Répartition des patients attendus selon la spécialité retenue")
+bar(attendus,"specialite","Patients attendus par spécialité retenue")
+```
+
+### Consultations par spécialité retenue
+
+```{r attendus-consultations, results="asis"}
+acte_cible <- "Consultation"
+sous_ensemble <- attendus |> filter(type_acte == acte_cible)
+repartition <- sous_ensemble |>
+  mutate(specialite = ifelse(est_manquant(specialite), "Non renseigné", specialite)) |>
+  count(specialite, name = "Effectif") |>
+  ordonner_modalites(colonne = "specialite") |>
+  mutate(`Pourcentage (%)` = pct_repartition(Effectif))
+if (nrow(repartition) > 0) {
+  tableau(repartition, caption = "Patients attendus en Consultation par spécialité retenue")
+} else {
+  cat("\nAucun patient attendu en consultation.\n\n")
+}
+```
+
+### Chirurgies par spécialité retenue
+
+```{r attendus-chirurgies, results="asis"}
+acte_cible <- "Chirurgie"
+sous_ensemble <- attendus |> filter(type_acte == acte_cible)
+repartition <- sous_ensemble |>
+  mutate(specialite = ifelse(est_manquant(specialite), "Non renseigné", specialite)) |>
+  count(specialite, name = "Effectif") |>
+  ordonner_modalites(colonne = "specialite") |>
+  mutate(`Pourcentage (%)` = pct_repartition(Effectif))
+if (nrow(repartition) > 0) {
+  tableau(repartition, caption = "Patients attendus en Chirurgie par spécialité retenue")
+} else {
+  cat("\nAucun patient attendu en chirurgie.\n\n")
+}
+```
+
+## Programmation des patients attendus
+
+```{r attendus-programmation, results="asis"}
+plan |> count(date_rdv,name="Lignes programmées",sort=TRUE) |>
+  arrange(est_manquant(date_rdv),desc(`Lignes programmées`)) |>
+  tableau(caption="Programmation par date (planning initial)")
+```
+
+# Bilan postes de triage
+
+Les effectifs ci-dessous correspondent aux **patients enregistrés aux postes de triage**, d'après le point de situation de la mission HARMONIE 2026 arrêté au **20 octobre 2026**. Ils ne doivent pas être assimilés automatiquement à des patients uniques ou à des consultations médicales effectivement réalisées.
+
+```{r triage, results="asis"}
+triage <- tibble::tibble(
+  Date = as.Date(c("2026-10-15", "2026-10-16", "2026-10-17", "2026-10-18", "2026-10-19", "2026-10-20")),
+  `Patients reçus` = c(319L, 604L, 1117L, 934L, 1051L, 512L)
+)
+total_triage <- sum(triage$`Patients reçus`)
+stopifnot(total_triage == 4537L)
+triage_table <- triage |>
+  dplyr::mutate(Date = format(Date, "%d/%m/%Y"),
+                `Pourcentage (%)` = pct_repartition(`Patients reçus`))
+# Ligne de total calculée explicitement pour les données de triage.
+triage_table <- dplyr::bind_rows(
+  triage_table,
+  tibble::tibble(Date="Total", `Patients reçus`=total_triage, `Pourcentage (%)`=100)
+)
+knitr::kable(
+  triage_table |> dplyr::mutate(
+    `Patients reçus`=fmt(`Patients reçus`),
+    `Pourcentage (%)`=fmt_pct(`Pourcentage (%)`)),
+  caption="Patients reçus aux postes de triage, du 15 au 20 octobre 2026"
+) |> print()
+cat("\n\nAu total, **",fmt(total_triage)," enregistrements** ont été comptabilisés aux postes de triage sur la période considérée. La fréquentation maximale a été observée le **",format(triage$Date[which.max(triage$`Patients reçus`)],"%d/%m/%Y"),"** (",fmt(max(triage$`Patients reçus`))," enregistrements, soit ",fmt_pct(100*max(triage$`Patients reçus`)/total_triage)," du total).**\n\n",sep="")
+print(
+  ggplot2::ggplot(triage,ggplot2::aes(x=Date,y=`Patients reçus`)) +
+    ggplot2::geom_col(fill=harmonie_cols[1],width=0.7) +
+    ggplot2::geom_text(ggplot2::aes(label=fmt(`Patients reçus`)),vjust=-0.4,size=3.5) +
+    ggplot2::scale_x_date(date_labels="%d/%m",date_breaks="1 day") +
+    ggplot2::scale_y_continuous(labels=fmt,expand=ggplot2::expansion(mult=c(0,0.12))) +
+    ggplot2::labs(title="Fréquentation journalière des postes de triage",x="Date",y="Patients enregistrés")
+)
+```
+
+# Bilan équipe médicale chinoise
+
+Le caractère agrégé des données d’activité ne permet pas d’estimer la distribution des patients effectivement pris en charge selon le sexe, l’âge ou la catégorie. Une analyse sociodémographique de cette population nécessiterait des données individuelles correspondantes.
+
+
+
+
+```{r bilan}
+tibble(Indicateur=ifelse(names(tot)=="Équipe médicale (actes)", "Actes hors navire", names(tot)),Total=as.numeric(tot)) |>
+ tableau(caption="Totaux des activités déclarées par la mission chinoise")
+for(v in intersect(c("Consultations total","Bilans santé total","Chirurgie total","Équipe médicale (actes)","Examens total","Ordonnances","Médicaments délivrés (boîtes)"),names(bilan))) {
+ p <- ggplot(bilan,aes(x=Date,y=.data[[v]])) + geom_col(fill=harmonie_cols[1]) +
+   scale_x_date(date_labels="%d/%m",date_breaks="1 day") +
+   labs(title=paste("Évolution journalière —",v),x="Date",y="Effectif") + scale_y_continuous(labels=function(x) fmt(x))
+ print(p)
+}
+```
+
+
+Selon les données agrégées déclarées par l’équipe médicale chinoise, **`r fmt(get_total("Consultations total"))` consultations** et **`r fmt(get_total("Chirurgie total"))` interventions chirurgicales** ont été réalisées. Ces indicateurs quantifient l’activité médicale et ne permettent pas d’estimer directement le nombre de personnes distinctes prises en charge.
+
+# Bilan comparatif
+
+
+
+```{r comparaison}
+# Les deux catégories sont exclusives et exhaustives.
+att_cons <- sum(attendus$type_acte=="Consultation",na.rm=TRUE)
+att_chir <- sum(attendus$type_acte=="Chirurgie",na.rm=TRUE)
+comparaison <- tibble(
+ Activite=c("Consultation","Chirurgie"),
+ `Attendus`=c(att_cons,att_chir),
+ `Actes déclarés (bilan chinois)`=c(get_total("Consultations total"),get_total("Chirurgie total"))) |>
+ mutate(`Écart de volumes`=`Actes déclarés (bilan chinois)`-Attendus,
+        `Rapport réalisés / attendus (%)`=pct(`Actes déclarés (bilan chinois)`,Attendus),
+        `% des attendus`=pct_repartition(Attendus),
+        `% des activités réalisées`=pct_repartition(`Actes déclarés (bilan chinois)`))
+tableau(comparaison,caption="Comparaison indicative par grandes familles d'actes")
+comparaison |> select(Activite,Attendus,`Actes déclarés (bilan chinois)`) |>
+ pivot_longer(-Activite,names_to="Source",values_to="Effectif") |>
+ ggplot(aes(x=Activite,y=Effectif,fill=Source)) + geom_col(position="dodge") + scale_fill_manual(values=setNames(harmonie_cols[1:2],c("Attendus","Actes déclarés (bilan chinois)"))) +
+ labs(title="Volumes attendus et activités réalisées",x=NULL,y="Effectif")
+```
+
+
+```{r commentaire-comparatif, results='asis'}
+# Commentaire descriptif calculé sur les deux catégories d'actes.
+for (i in seq_len(nrow(comparaison))) {
+  x <- comparaison[i, ]
+  attendus_n <- x$Attendus
+  realises_n <- x$`Actes déclarés (bilan chinois)`
+  ecart_n <- x$`Écart de volumes`
+  rapport_n <- x$`Rapport réalisés / attendus (%)`
+  sens <- if (ecart_n > 0) "supérieur" else if (ecart_n < 0) "inférieur" else "égal"
+  cat(sprintf(
+    "Pour les **%s**, le planning prévoyait **%s patients**, tandis que le bilan chinois fait état de **%s actes**. Le volume déclaré est %s au volume attendu (écart : **%s actes** ; rapport des volumes : **%s**).\n\n",
+    tolower(x$Activite), fmt(attendus_n), fmt(realises_n), sens,
+    fmt(abs(ecart_n)), fmt_pct(rapport_n)
+  ))
+}
+cat("Ces écarts décrivent des différences entre des **effectifs de patients programmés** et des **volumes d'actes déclarés**. Ils ne mesurent pas directement la présence effective des patients, car les données ne permettent pas d'apparier individuellement les personnes attendues et les actes réalisés.\n")
+```
