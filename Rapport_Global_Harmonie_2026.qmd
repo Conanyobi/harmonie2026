@@ -458,7 +458,7 @@ print(
 
 # Bilan équipe médicale chinoise
 
-Le caractère agrégé des données d’activité ne permet pas d’estimer la distribution des patients effectivement pris en charge selon le sexe, l’âge ou la catégorie. Une analyse sociodémographique de cette population nécessiterait des données individuelles correspondantes.
+Le caractère agrégé des données d’activité ne permet pas d’estimer la distribution des patients effectivement pris en charge selon le sexe, l’âge ou la catégorie. Une analyse sociodémographique nécessiterait les données individuelles correspondantes. Ces données n'ont pas été communiquées par la partie chinoise.
 
 
 
