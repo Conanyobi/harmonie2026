@@ -1,6 +1,6 @@
 ---
-title: "MISSION HARMONIE 2026 — RAPPORT BILAN GLOBAL"
-subtitle: "Synthèse générale, recensement, sélection, triage, équipe médicale chinoise et comparaison"
+title: "MISSION HARMONIE 2026"
+subtitle: "Rapport bilan global"
 author: "Dr K. M. YEBOUE"
 date: today
 date-format: "D MMMM YYYY"
